@@ -13,6 +13,19 @@
 #
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import collections
 from time import sleep
 from typing import List
@@ -20,8 +33,7 @@ from typing import List
 from PyQt5 import QtCore
 from PyQt5.QtCore import pyqtSlot, pyqtSignal
 
-import NanoVNASaver
-
+from NanoVNASaver import NanoVNASaver as nano
 Datapoint = collections.namedtuple('Datapoint', 'freq re im')
 
 
@@ -31,7 +43,7 @@ class WorkerSignals(QtCore.QObject):
 
 
 class SweepWorker(QtCore.QRunnable):
-    def __init__(self, app: NanoVNASaver):
+    def __init__(self, app: nano):
         super().__init__()
         self.signals = WorkerSignals()
         self.app = app
@@ -55,9 +67,9 @@ class SweepWorker(QtCore.QRunnable):
             sweepFrom = 1000000
             sweepTo = 800000000
         else:
-            from NanoVNASaver import NanoVNASaver
-            sweepFrom = NanoVNASaver.parseFrequency(self.app.sweepStartInput.text())
-            sweepTo = NanoVNASaver.parseFrequency(self.app.sweepEndInput.text())
+            from NanoVNASaver import NanoVNASaver as nano
+            sweepFrom = nano.NanoVNASaver.parseFrequency(self.app.sweepStartInput.text())
+            sweepTo = nano.NanoVNASaver.parseFrequency(self.app.sweepEndInput.text())
             if sweepFrom < 0 or sweepTo < 0:
                 print("Can't sweep from " + self.app.sweepStartInput.text() + " to " + self.app.sweepEndInput.text())
                 self.signals.finished.emit()
@@ -85,7 +97,7 @@ class SweepWorker(QtCore.QRunnable):
                 self.saveData(frequencies, values, values12)
 
             # Reset the device to show the full range
-            self.app.setSweep(NanoVNASaver.parseFrequency(self.app.sweepStartInput.text()), NanoVNASaver.parseFrequency(self.app.sweepEndInput.text()))
+            self.app.setSweep(nano.NanoVNASaver.parseFrequency(self.app.sweepStartInput.text()), nano.NanoVNASaver.parseFrequency(self.app.sweepEndInput.text()))
         else:
             self.app.setSweep(sweepFrom, sweepTo)
             sleep(0.8)

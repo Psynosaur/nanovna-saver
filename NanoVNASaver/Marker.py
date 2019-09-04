@@ -13,6 +13,19 @@
 #
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import collections
 from typing import List
 
@@ -50,8 +63,8 @@ class Marker(QtCore.QObject):
         self.layout.addWidget(self.btnColorPicker)
 
     def setFrequency(self, frequency):
-        from NanoVNASaver import NanoVNASaver
-        f = NanoVNASaver.parseFrequency(frequency)
+        from NanoVNASaver import NanoVNASaver as nano
+        f = nano.NanoVNASaver.parseFrequency(frequency)
         if f > 0:
             self.frequency = f
             self.updated.emit()
