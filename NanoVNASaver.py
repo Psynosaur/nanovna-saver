@@ -25,6 +25,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from serial.tools import list_ports
 
 import Chart
+from Calibration import CalibrationWindow, Calibration
 from Marker import Marker
 from SmithChart import SmithChart
 from SweepWorker import SweepWorker
@@ -35,6 +36,7 @@ Datapoint = collections.namedtuple('Datapoint', 'freq re im')
 
 VID = 1155
 PID = 22336
+
 
 class NanoVNASaver(QtWidgets.QWidget):
     def __init__(self):
@@ -50,10 +52,12 @@ class NanoVNASaver(QtWidgets.QWidget):
         self.serial = serial.Serial()
 
         self.dataLock = threading.Lock()
-        self.data : List[Datapoint] = []
-        self.data21 : List[Datapoint] = []
-        self.referenceS11data : List[Datapoint] = []
-        self.referenceS21data : List[Datapoint] = []
+        self.data: List[Datapoint] = []
+        self.data21: List[Datapoint] = []
+        self.referenceS11data: List[Datapoint] = []
+        self.referenceS21data: List[Datapoint] = []
+
+        self.calibration = Calibration()
 
         self.markers = []
 
@@ -65,14 +69,24 @@ class NanoVNASaver(QtWidgets.QWidget):
 
         self.setWindowTitle("NanoVNA Saver")
         layout = QtWidgets.QGridLayout()
-        self.setLayout(layout)
+        scrollarea = QtWidgets.QScrollArea()
+        outer = QtWidgets.QVBoxLayout()
+        outer.addWidget(scrollarea)
+        self.setLayout(outer)
+        scrollarea.setWidgetResizable(True)
+        self.resize(1150, 950)
+        scrollarea.setSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.MinimumExpanding)
+        self.setSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.MinimumExpanding)
+        widget = QtWidgets.QWidget()
+        widget.setLayout(layout)
+        scrollarea.setWidget(widget)
 
         self.s11SmithChart = SmithChart("S11")
         self.s21SmithChart = SmithChart("S21")
         self.s11LogMag = LogMagChart("S11 Return Loss")
         self.s21LogMag = LogMagChart("S21 Gain")
 
-        self.charts : List[Chart] = []
+        self.charts: List[Chart] = []
         self.charts.append(self.s11SmithChart)
         self.charts.append(self.s21SmithChart)
         self.charts.append(self.s11LogMag)
@@ -112,7 +126,7 @@ class NanoVNASaver(QtWidgets.QWidget):
         self.btnColorPicker = QtWidgets.QPushButton("█")
         self.btnColorPicker.setFixedWidth(20)
         self.setSweepColor(self.color)
-        self.btnColorPicker.clicked.connect(lambda: self.setSweepColor(QtWidgets.QColorDialog.getColor(self.color, options=QtWidgets.QColorDialog.ShowAlphaChannel)))
+        self.btnColorPicker.clicked.connect(lambda:self.setSweepColor(QtWidgets.QColorDialog.getColor(self.color,options=QtWidgets.QColorDialog.ShowAlphaChannel)))
 
         sweep_control_layout.addRow("Sweep color", self.btnColorPicker)
 
@@ -136,6 +150,10 @@ class NanoVNASaver(QtWidgets.QWidget):
         marker_control_box.setMaximumWidth(400)
         marker_control_layout = QtWidgets.QFormLayout(marker_control_box)
 
+        mouse_marker = Marker("Mouse marker", QtGui.QColor(20, 255, 20))
+        mouse_marker.updated.connect(self.dataUpdated)
+        self.markers.append(mouse_marker)
+
         marker1 = Marker("Marker 1", QtGui.QColor(255, 0, 20))
         marker1.updated.connect(self.dataUpdated)
         label, layout = marker1.getRow()
@@ -151,11 +169,15 @@ class NanoVNASaver(QtWidgets.QWidget):
         self.s11SmithChart.setMarkers(self.markers)
         self.s21SmithChart.setMarkers(self.markers)
 
+        self.mousemarkerlabel = QtWidgets.QLabel("")
+        self.mousemarkerlabel.setMinimumWidth(160)
+        marker_control_layout.addRow(QtWidgets.QLabel("Mouse marker:"), self.mousemarkerlabel)
+
         self.marker1label = QtWidgets.QLabel("")
-        marker_control_layout.addRow(QtWidgets.QLabel("Marker 1: "), self.marker1label)
+        marker_control_layout.addRow(QtWidgets.QLabel("Marker 1:"), self.marker1label)
 
         self.marker2label = QtWidgets.QLabel("")
-        marker_control_layout.addRow(QtWidgets.QLabel("Marker 2: "), self.marker2label)
+        marker_control_layout.addRow(QtWidgets.QLabel("Marker 2:"), self.marker2label)
 
         left_column.addWidget(marker_control_box)
 
@@ -167,6 +189,7 @@ class NanoVNASaver(QtWidgets.QWidget):
         s11_control_box.setTitle("S11")
         s11_control_layout = QtWidgets.QFormLayout()
         s11_control_box.setLayout(s11_control_layout)
+        s11_control_box.setMaximumWidth(400)
 
         self.s11_min_swr_label = QtWidgets.QLabel()
         s11_control_layout.addRow("Min VSWR:", self.s11_min_swr_label)
@@ -179,6 +202,7 @@ class NanoVNASaver(QtWidgets.QWidget):
         s21_control_box.setTitle("S21")
         s21_control_layout = QtWidgets.QFormLayout()
         s21_control_box.setLayout(s21_control_layout)
+        s21_control_box.setMaximumWidth(400)
 
         self.s21_min_gain_label = QtWidgets.QLabel()
         s21_control_layout.addRow("Min gain:", self.s21_min_gain_label)
@@ -192,6 +216,7 @@ class NanoVNASaver(QtWidgets.QWidget):
         tdr_control_box.setTitle("TDR")
         tdr_control_layout = QtWidgets.QFormLayout()
         tdr_control_box.setLayout(tdr_control_layout)
+        tdr_control_box.setMaximumWidth(400)
 
         self.tdr_velocity_dropdown = QtWidgets.QComboBox()
         self.tdr_velocity_dropdown.addItem("Jelly filled (0.64)", 0.64)
@@ -227,6 +252,18 @@ class NanoVNASaver(QtWidgets.QWidget):
         left_column.addWidget(tdr_control_box)
 
         ################################################################################################################
+        #  Calibration
+        ################################################################################################################
+        calibration_control_box = QtWidgets.QGroupBox("Calibration")
+        calibration_control_box.setMaximumWidth(400)
+        calibration_control_layout = QtWidgets.QFormLayout(calibration_control_box)
+        b = QtWidgets.QPushButton("Calibration ...")
+        self.calibrationWindow = CalibrationWindow(self)
+        b.clicked.connect(self.calibrationWindow.show)
+        calibration_control_layout.addRow(b)
+        left_column.addWidget(calibration_control_box)
+
+        ################################################################################################################
         #  Spacer
         ################################################################################################################
 
@@ -258,25 +295,6 @@ class NanoVNASaver(QtWidgets.QWidget):
         reference_control_layout.addRow(set_reference_layout)
         reference_control_layout.addRow(self.btnResetReference)
 
-        self.referenceFileNameInput = QtWidgets.QLineEdit("")
-        btnReferenceFilePicker = QtWidgets.QPushButton("...")
-        btnReferenceFilePicker.setMaximumWidth(25)
-        btnReferenceFilePicker.clicked.connect(self.pickReferenceFile)
-        referenceFileNameLayout = QtWidgets.QHBoxLayout()
-        referenceFileNameLayout.addWidget(self.referenceFileNameInput)
-        referenceFileNameLayout.addWidget(btnReferenceFilePicker)
-
-        reference_control_layout.addRow(QtWidgets.QLabel("Filename"), referenceFileNameLayout)
-
-        import_button_layout = QtWidgets.QHBoxLayout()
-        btnLoadReference = QtWidgets.QPushButton("Load reference")
-        btnLoadReference.clicked.connect(self.loadReferenceFile)
-        btnLoadSweep = QtWidgets.QPushButton("Load as sweep")
-        btnLoadSweep.clicked.connect(self.loadSweepFile)
-        import_button_layout.addWidget(btnLoadReference)
-        import_button_layout.addWidget(btnLoadSweep)
-        reference_control_layout.addRow(import_button_layout)
-
         left_column.addWidget(reference_control_box)
 
         ################################################################################################################
@@ -305,6 +323,31 @@ class NanoVNASaver(QtWidgets.QWidget):
         #  File control
         ################################################################################################################
 
+        self.fileWindow = QtWidgets.QWidget()
+        self.fileWindow.setWindowTitle("Files")
+        file_window_layout = QtWidgets.QVBoxLayout()
+        self.fileWindow.setLayout(file_window_layout)
+
+        reference_file_control_box = QtWidgets.QGroupBox("Import file")
+        reference_file_control_layout = QtWidgets.QFormLayout(reference_file_control_box)
+        self.referenceFileNameInput = QtWidgets.QLineEdit("")
+        btnReferenceFilePicker = QtWidgets.QPushButton("...")
+        btnReferenceFilePicker.setMaximumWidth(25)
+        btnReferenceFilePicker.clicked.connect(self.pickReferenceFile)
+        referenceFileNameLayout = QtWidgets.QHBoxLayout()
+        referenceFileNameLayout.addWidget(self.referenceFileNameInput)
+        referenceFileNameLayout.addWidget(btnReferenceFilePicker)
+
+        reference_file_control_layout.addRow(QtWidgets.QLabel("Filename"), referenceFileNameLayout)
+        file_window_layout.addWidget(reference_file_control_box)
+
+        btnLoadReference = QtWidgets.QPushButton("Load reference")
+        btnLoadReference.clicked.connect(self.loadReferenceFile)
+        btnLoadSweep = QtWidgets.QPushButton("Load as sweep")
+        btnLoadSweep.clicked.connect(self.loadSweepFile)
+        reference_file_control_layout.addRow(btnLoadReference)
+        reference_file_control_layout.addRow(btnLoadSweep)
+
         file_control_box = QtWidgets.QGroupBox()
         file_control_box.setTitle("Export file")
         file_control_box.setMaximumWidth(400)
@@ -327,6 +370,16 @@ class NanoVNASaver(QtWidgets.QWidget):
         self.btnExportFile.clicked.connect(self.exportFileS2P)
         file_control_layout.addRow(self.btnExportFile)
 
+        file_window_layout.addWidget(file_control_box)
+
+        file_control_box = QtWidgets.QGroupBox()
+        file_control_box.setTitle("Files")
+        file_control_box.setMaximumWidth(400)
+        file_control_layout = QtWidgets.QFormLayout(file_control_box)
+        btnOpenFileWindow = QtWidgets.QPushButton("Files ...")
+        file_control_layout.addWidget(btnOpenFileWindow)
+        btnOpenFileWindow.clicked.connect(lambda: self.fileWindow.show())
+
         left_column.addWidget(file_control_box)
 
         ################################################################################################################
@@ -334,7 +387,7 @@ class NanoVNASaver(QtWidgets.QWidget):
         ################################################################################################################
 
         self.lister = QtWidgets.QPlainTextEdit()
-        self.lister.setFixedHeight(100)
+        self.lister.setFixedHeight(80)
         charts = QtWidgets.QGridLayout()
         charts.addWidget(self.s11SmithChart, 0, 0)
         charts.addWidget(self.s21SmithChart, 1, 0)
@@ -351,7 +404,8 @@ class NanoVNASaver(QtWidgets.QWidget):
         self.worker.signals.finished.connect(self.sweepFinished)
 
     # Get that windows port
-    def getport(self) -> str:
+    @staticmethod
+    def getport() -> str:
         device_list = list_ports.comports()
         for d in device_list:
             if (d.vid == VID and
@@ -360,12 +414,16 @@ class NanoVNASaver(QtWidgets.QWidget):
                 return port
 
     def pickReferenceFile(self):
-        filename, _ = QtWidgets.QFileDialog.getOpenFileName(directory=self.referenceFileNameInput.text(), filter="Touchstone Files (*.s1p *.s2p);;All files (*.*)")
-        self.referenceFileNameInput.setText(filename)
+        filename, _ = QtWidgets.QFileDialog.getOpenFileName(directory=self.referenceFileNameInput.text(),
+                                                            filter="Touchstone Files (*.s1p *.s2p);;All files (*.*)")
+        if filename != "":
+            self.referenceFileNameInput.setText(filename)
 
     def pickFile(self):
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(directory=self.fileNameInput.text(), filter="Touchstone Files (*.s1p *.s2p);;All files (*.*)")
-        self.fileNameInput.setText(filename)
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(directory=self.fileNameInput.text(),
+                                                            filter="Touchstone Files (*.s1p *.s2p);;All files (*.*)")
+        if filename != "":
+            self.fileNameInput.setText(filename)
 
     def exportFileS1P(self):
         print("Save file to " + self.fileNameInput.text())
@@ -396,7 +454,7 @@ class NanoVNASaver(QtWidgets.QWidget):
 
     def exportFileS2P(self):
         print("Save file to " + self.fileNameInput.text())
-        if (len(self.data) == 0):
+        if len(self.data) == 0:
             self.lister.appendPlainText("No data stored, nothing written.")
             return
         filename = self.fileNameInput.text()
@@ -439,7 +497,7 @@ class NanoVNASaver(QtWidgets.QWidget):
                 self.serial = serial.Serial(port=self.serialPort, baudrate=115200)
                 self.serial.timeout = 0.05
             except serial.SerialException as exc:
-                self.lister.appendPlainText("Tried to open " + self.serialPort + " and failed.")
+                self.lister.appendPlainText("Tried to open " + self.serialPort + " and failed: " + str(exc))
                 self.serialLock.release()
                 return
             self.btnSerialToggle.setText("Close serial")
@@ -470,7 +528,7 @@ class NanoVNASaver(QtWidgets.QWidget):
                 self.serial.write(str(command + "\r").encode('ascii'))
                 self.serial.readline()
             except serial.SerialException as exc:
-                print("Exception received")
+                print("Exception received: " + str(exc))
             self.serialLock.release()
         return
 
@@ -485,6 +543,7 @@ class NanoVNASaver(QtWidgets.QWidget):
 
         self.sweepProgressBar.setValue(0)
         self.btnSweep.setDisabled(True)
+        self.mousemarkerlabel.setText("")
         self.marker1label.setText("")
         self.marker2label.setText("")
         self.s11_min_rl_label.setText("")
@@ -531,15 +590,22 @@ class NanoVNASaver(QtWidgets.QWidget):
             # TODO: Make a neater solution for showing data for markers
             if self.markers[0].location != -1:
                 im50, re50, vswr = self.vswr(self.data[self.markers[0].location])
-                if (im50 < 0):
+                if im50 < 0:
+                    im50str = "- j" + str(round(-1*im50, 3))
+                else:
+                    im50str = "+ j" + str(round(im50, 3))
+                self.mousemarkerlabel.setText(str(round(re50, 3)) + im50str + " VSWR: 1:" + str(round(vswr, 3)))
+            if self.markers[1].location != -1:
+                im50, re50, vswr = self.vswr(self.data[self.markers[1].location])
+                if im50 < 0:
                     im50str = "- j" + str(round(-1*im50, 3))
                 else:
                     im50str = "+ j" + str(round(im50, 3))
                 self.marker1label.setText(str(round(re50, 3)) + im50str + " VSWR: 1:" + str(round(vswr, 3)))
 
-            if self.markers[1].location != -1:
-                im50, re50, vswr = self.vswr(self.data[self.markers[1].location])
-                if (im50 < 0):
+            if self.markers[2].location != -1:
+                im50, re50, vswr = self.vswr(self.data[self.markers[2].location])
+                if im50 < 0:
                     im50str = "- j" + str(round(im50, 3))
                 else:
                     im50str = "+ j" + str(round(im50, 3))
@@ -556,7 +622,7 @@ class NanoVNASaver(QtWidgets.QWidget):
             minVSWRfreq = -1
             for d in self.data:
                 _, _, vswr = self.vswr(d)
-                if vswr < minVSWR and vswr > 0:
+                if minVSWR > vswr > 0:
                     minVSWR = vswr
                     minVSWRfreq = d.freq
 
@@ -605,7 +671,7 @@ class NanoVNASaver(QtWidgets.QWidget):
         # Calculate the gain / reflection coefficient
         mag = math.sqrt((re50 - 50) * (re50 - 50) + im50 * im50) / math.sqrt(
             (re50 + 50) * (re50 + 50) + im50 * im50)
-        return(20 * math.log10(mag))
+        return 20 * math.log10(mag)
 
     def sweepFinished(self):
         self.sweepProgressBar.setValue(100)
@@ -646,12 +712,12 @@ class NanoVNASaver(QtWidgets.QWidget):
         time_axis = np.linspace(0, 1/step_size, 2**14)
         distance_axis = time_axis * v * c
 
-        peak = np.max(td)  # We should check that this is an actual *peak*, and not just a vague maximum
+        # peak = np.max(td)  # We should check that this is an actual *peak*, and not just a vague maximum
         index_peak = np.argmax(td)
 
         self.tdr_result_label.setText(str(round(distance_axis[index_peak]/2, 3)) + " m")
 
-    def setSweepColor(self, color : QtGui.QColor):
+    def setSweepColor(self, color: QtGui.QColor):
         if color.isValid():
             self.color = color
             p = self.btnColorPicker.palette()
@@ -673,7 +739,7 @@ class NanoVNASaver(QtWidgets.QWidget):
             return "{:.3f}".format(freq/1000000) + " MHz"
 
     @staticmethod
-    def parseFrequency(freq : str):
+    def parseFrequency(freq: str):
         freq = freq.replace(" ", "")  # People put all sorts of weird whitespace in.
         if freq.isnumeric():
             return int(freq)
@@ -698,10 +764,11 @@ class NanoVNASaver(QtWidgets.QWidget):
             # Okay, we couldn't parse this however much we tried.
             return -1
 
-    def setReference(self):
-        self.setReference(self.data, self.data21)
-
-    def setReference(self, s11data, s21data):
+    def setReference(self, s11data=None, s21data=None):
+        if not s11data:
+            s11data = self.data
+        if not s21data:
+            s21data = self.data21
         self.referenceS11data = s11data
         self.s11SmithChart.setReference(s11data)
         self.s11LogMag.setReference(s11data)
@@ -734,10 +801,12 @@ class NanoVNASaver(QtWidgets.QWidget):
         t.load()
         self.setReference(t.s11data, t.s21data)
 
-
     def loadSweepFile(self):
         filename = self.referenceFileNameInput.text()
         t = Touchstone(filename)
         t.load()
         self.saveData(t.s11data, t.s21data)
         self.dataUpdated()
+
+    def sizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(1100, 950)
